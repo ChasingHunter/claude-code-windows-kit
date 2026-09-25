@@ -256,7 +256,16 @@ function Register-ProtocolHandler {
 
   # The plugin cache path changes on every update, so the registry always
   # points at this stable LOCALAPPDATA copy rather than $PSScriptRoot.
-  $expectedCommand = "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$stableCopy`" `"%1`""
+  # powershell.exe is a console-subsystem exe, so -WindowStyle Hidden still
+  # lets a console window flash briefly before it applies. Launching it under
+  # conhost --headless (Windows 10 21H2+/11) avoids allocating a visible
+  # console at all; fall back to the old command line if conhost isn't there.
+  $conhostPath = Join-Path $env:SystemRoot 'System32\conhost.exe'
+  $expectedCommand = if (Test-Path $conhostPath) {
+    "`"$conhostPath`" --headless powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$stableCopy`" `"%1`""
+  } else {
+    "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$stableCopy`" `"%1`""
+  }
   $protocolKey = 'HKCU:\Software\Classes\cckit-open'
   $commandKey = "$protocolKey\shell\open\command"
 
