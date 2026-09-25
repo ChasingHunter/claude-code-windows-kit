@@ -1,0 +1,29 @@
+{
+  "name": "toast-notify",
+  "version": "1.0.0",
+  "description": "Native Windows toast notification whenever Claude Code needs your permission or is waiting for input.",
+  "author": {
+    "name": "Hunter"
+  },
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": [
+              "-NoProfile",
+              "-NonInteractive",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/notify.ps1"
+            ],
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
