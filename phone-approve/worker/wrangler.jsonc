@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "phone-approve",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-25",
+  "durable_objects": {
+    "bindings": [{ "name": "APPROVAL_STORE", "class_name": "ApprovalStore" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ApprovalStore"] }]
+}
