@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(npx wrangler deploy*)",
+      "Bash(npx wrangler deploy*)",
+      "PowerShell(git push*)",
+      "Bash(git push*)",
+      "PowerShell(gh workflow run*)",
+      "Bash(gh workflow run*)"
+    ]
+  }
+}
