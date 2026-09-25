@@ -1,0 +1,50 @@
+{
+  "name": "phone-approve",
+  "version": "1.0.0",
+  "description": "Send permission prompts and clarifying questions to your phone over WhatsApp when you've stepped away from the laptop.",
+  "author": {
+    "name": "Hunter"
+  },
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": [
+              "-NoProfile",
+              "-NonInteractive",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/approve.ps1"
+            ],
+            "timeout": 1800
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": [
+              "-NoProfile",
+              "-NonInteractive",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/approve.ps1"
+            ],
+            "timeout": 1800
+          }
+        ]
+      }
+    ]
+  }
+}
