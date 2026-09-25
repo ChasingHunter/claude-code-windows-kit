@@ -192,6 +192,66 @@ function Build-AskUserQuestionDecisionJson {
 
 <#
 .SYNOPSIS
+The part of a tool call's input that identifies it: the command for Bash,
+the path for file tools, otherwise the whole input as compact JSON.
+#>
+function Get-ToolFingerprint {
+  param([string]$ToolName, $ToolInput)
+  if ($null -eq $ToolInput) { return '' }
+  switch ($ToolName) {
+    'Bash' { return [string]$ToolInput.command }
+    'PowerShell' { return [string]$ToolInput.command }
+    'NotebookEdit' { return [string]$ToolInput.notebook_path }
+    default {
+      if ($ToolInput.file_path) { return [string]$ToolInput.file_path }
+      return ($ToolInput | ConvertTo-Json -Compress -Depth 10)
+    }
+  }
+}
+
+<#
+.SYNOPSIS
+Finds the id of the most recent tool call in the transcript that matches
+this tool and input and has no result yet — the call the permission prompt
+is for. PermissionRequest input carries no tool_use_id, so this is how the
+hook later tells that the prompt was answered on the laptop.
+#>
+function Find-PendingToolUseId {
+  param([string]$TranscriptPath, [string]$ToolName, $ToolInput, [int]$TailLines = 400)
+
+  if (-not $TranscriptPath -or -not (Test-Path -LiteralPath $TranscriptPath)) { return $null }
+  $want = Get-ToolFingerprint -ToolName $ToolName -ToolInput $ToolInput
+  $candidates = [System.Collections.Generic.List[string]]::new()
+  $answered = @{}
+
+  foreach ($line in (Get-Content -LiteralPath $TranscriptPath -Tail $TailLines)) {
+    if ($line -notmatch '"tool_use') { continue }
+    try { $entry = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+    $content = $entry.message.content
+    if ($content -is [string] -or $null -eq $content) { continue }
+    foreach ($block in $content) {
+      if ($block.type -eq 'tool_use' -and $block.name -eq $ToolName -and
+        (Get-ToolFingerprint -ToolName $ToolName -ToolInput $block.input) -eq $want) {
+        $candidates.Add([string]$block.id)
+      }
+      if ($block.type -eq 'tool_result') { $answered[[string]$block.tool_use_id] = $true }
+    }
+  }
+
+  for ($i = $candidates.Count - 1; $i -ge 0; $i--) {
+    if (-not $answered.ContainsKey($candidates[$i])) { return $candidates[$i] }
+  }
+  return $null
+}
+
+function Test-ToolAnswered {
+  param([string]$TranscriptPath, [string]$ToolUseId)
+  if (-not $ToolUseId -or -not (Test-Path -LiteralPath $TranscriptPath)) { return $false }
+  return [bool](Select-String -LiteralPath $TranscriptPath -SimpleMatch "`"tool_use_id`":`"$ToolUseId`"" -Quiet)
+}
+
+<#
+.SYNOPSIS
 True once the laptop has been idle at least $IdleMinutes minutes.
 IdleMinutes 0 always relays immediately (used for the manual smoke test).
 #>
@@ -315,10 +375,9 @@ timeoutMinutes elapses. Returns $null on timeout/activity/cancelled/expired
 resolved status (and, for a question, its answers).
 #>
 function Wait-ForDecision {
-  param($Config, [string]$Id, $StartInputTick)
+  param($Config, [string]$Id, $StartInputTick, [datetime]$Deadline)
 
-  $deadline = (Get-Date).AddMinutes($Config.timeoutMinutes)
-  while ((Get-Date) -lt $deadline) {
+  while ((Get-Date) -lt $Deadline) {
     Start-Sleep -Seconds ([Math]::Max(1, $Config.pollSeconds))
 
     if ((Get-LastInputTick) -ne $StartInputTick) { return $null } # user is back at the laptop
@@ -337,9 +396,56 @@ function Wait-ForDecision {
   return $null
 }
 
+<#
+.SYNOPSIS
+Decides whether to relay a prompt that may have appeared while the user was
+at the keyboard. Relays at once if the laptop is already idle. Otherwise it
+locates the prompt's tool call in the transcript and waits: 'idle' once the
+laptop has been idle for idleMinutes, 'answered' as soon as the call has a
+result (answered on the laptop — Claude Code doesn't stop the hook when that
+happens), 'untracked' if the call can't be found (so it can never be
+relayed after being answered), or 'timeout'.
+#>
+function Wait-UntilIdle {
+  param($Config, [datetime]$Deadline, [string]$TranscriptPath, [string]$ToolName, $ToolInput)
+
+  if (Test-ShouldRelay -IdleMs (Get-IdleMilliseconds) -IdleMinutes $Config.idleMinutes) { return 'idle' }
+
+  # The transcript is written asynchronously, so give the call a moment to appear.
+  $ToolUseId = $null
+  $findUntil = (Get-Date).AddSeconds(15)
+  while (-not $ToolUseId -and (Get-Date) -lt $findUntil) {
+    $ToolUseId = Find-PendingToolUseId -TranscriptPath $TranscriptPath -ToolName $ToolName -ToolInput $ToolInput
+    if (-not $ToolUseId) { Start-Sleep -Seconds 1 }
+  }
+  if (-not $ToolUseId) { return 'untracked' }
+
+  Write-PhoneApproveActivity "waiting: laptop in use, will relay $ToolUseId once idle"
+  while ((Get-Date) -lt $Deadline) {
+    if (Test-ToolAnswered -TranscriptPath $TranscriptPath -ToolUseId $ToolUseId) { return 'answered' }
+    if (Test-ShouldRelay -IdleMs (Get-IdleMilliseconds) -IdleMinutes $Config.idleMinutes) { return 'idle' }
+    Start-Sleep -Seconds ([Math]::Max(1, $Config.pollSeconds))
+  }
+  return 'timeout'
+}
+
 function Invoke-CancelRequest {
   param($Config, [string]$Id)
   try { Invoke-PhoneApproveApi -Config $Config -Path "/requests/$Id/cancel" -Method Post | Out-Null } catch { }
+}
+
+# One line per hook run and per outcome, so "why didn't this reach my phone?"
+# is answerable. Never records commands or file paths. A run with a start
+# line but no outcome line was killed by Claude Code (e.g. answered locally).
+function Write-PhoneApproveActivity {
+  param([string]$Text)
+  try {
+    $dataDir = Join-Path $env:LOCALAPPDATA 'claude-code-windows-kit\phone-approve'
+    New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+    $log = Join-Path $dataDir 'activity.log'
+    if ((Test-Path $log) -and (Get-Item $log).Length -gt 256KB) { Move-Item $log "$log.1" -Force }
+    Add-Content -Path $log -Value "$(Get-Date -Format o) [$PID] $Text"
+  } catch { }
 }
 
 function Write-PhoneApproveErrorLog {
@@ -372,23 +478,35 @@ if ($MyInvocation.InvocationName -ne '.') {
     $eventName = [string]$hookData.hook_event_name
     $toolName = [string]$hookData.tool_name
     $cwdName = if ($hookData.cwd) { Split-Path -Path ([string]$hookData.cwd) -Leaf } else { 'project' }
+    Write-PhoneApproveActivity "start $eventName $toolName in $cwdName, idle $([int]((Get-IdleMilliseconds) / 1000))s, threshold $($config.idleMinutes)m"
+    # One budget for waiting-to-go-idle plus waiting-for-the-phone, kept under
+    # the hook's own timeout in plugin.json.
+    $deadline = (Get-Date).AddMinutes($config.timeoutMinutes)
 
     if ($eventName -eq 'PreToolUse' -and $toolName -eq 'AskUserQuestion') {
       $questions = $hookData.tool_input.questions
       if (-not $questions) { exit 0 }
 
-      if (-not (Test-ShouldRelay -IdleMs (Get-IdleMilliseconds) -IdleMinutes $config.idleMinutes)) { exit 0 }
+      # PreToolUse runs before the question is shown locally, so waiting here
+      # would hide it from a user who is at the laptop: relay only if already idle.
+      if (-not (Test-ShouldRelay -IdleMs (Get-IdleMilliseconds) -IdleMinutes $config.idleMinutes)) {
+        Write-PhoneApproveActivity 'not relayed: laptop in use'
+        exit 0
+      }
 
       $startInputTick = Get-LastInputTick
       $id = Invoke-CreateQuestionRequest -Config $config -Questions $questions -CwdName $cwdName -SessionId ([string]$hookData.session_id)
-      if (-not $id) { exit 0 }
+      if (-not $id) { Write-PhoneApproveActivity 'send failed (see error.log)'; exit 0 }
+      Write-PhoneApproveActivity "sent question $id"
 
-      $result = Wait-ForDecision -Config $config -Id $id -StartInputTick $startInputTick
+      $result = Wait-ForDecision -Config $config -Id $id -StartInputTick $startInputTick -Deadline $deadline
       if (-not $result -or $result.status -ne 'answered') {
+        Write-PhoneApproveActivity "no phone answer for $id (laptop input, timeout or cancelled)"
         Invoke-CancelRequest -Config $config -Id $id
         exit 0
       }
 
+      Write-PhoneApproveActivity "answered from phone: $id"
       Write-Output (Build-AskUserQuestionDecisionJson -AskMode $config.askMode -Questions $questions -Answers $result.answers)
       exit 0
     }
@@ -396,19 +514,23 @@ if ($MyInvocation.InvocationName -ne '.') {
     if ($eventName -eq 'PermissionRequest') {
       if ($toolName -eq 'AskUserQuestion') { exit 0 } # handled by the PreToolUse hook instead
 
-      if (-not (Test-ShouldRelay -IdleMs (Get-IdleMilliseconds) -IdleMinutes $config.idleMinutes)) { exit 0 }
+      $ready = Wait-UntilIdle -Config $config -Deadline $deadline -TranscriptPath ([string]$hookData.transcript_path) -ToolName $toolName -ToolInput $hookData.tool_input
+      if ($ready -ne 'idle') { Write-PhoneApproveActivity "not relayed: $ready"; exit 0 }
 
       $summary = Build-Summary -ToolName $toolName -ToolInput $hookData.tool_input
       $startInputTick = Get-LastInputTick
       $id = Invoke-CreatePermissionRequest -Config $config -ToolName $toolName -Summary $summary -CwdName $cwdName -SessionId ([string]$hookData.session_id)
-      if (-not $id) { exit 0 }
+      if (-not $id) { Write-PhoneApproveActivity 'send failed (see error.log)'; exit 0 }
+      Write-PhoneApproveActivity "sent permission $id"
 
-      $result = Wait-ForDecision -Config $config -Id $id -StartInputTick $startInputTick
+      $result = Wait-ForDecision -Config $config -Id $id -StartInputTick $startInputTick -Deadline $deadline
       if (-not $result -or ($result.status -ne 'allow' -and $result.status -ne 'deny')) {
+        Write-PhoneApproveActivity "no phone decision for $id (laptop input, timeout or cancelled)"
         Invoke-CancelRequest -Config $config -Id $id
         exit 0
       }
 
+      Write-PhoneApproveActivity "phone decision for ${id}: $($result.status)"
       Write-Output (Build-DecisionJson -Behavior $result.status)
       exit 0
     }

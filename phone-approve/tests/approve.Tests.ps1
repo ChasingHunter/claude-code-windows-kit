@@ -185,3 +185,40 @@ Describe 'Get-PhoneApproveConfig' {
     }
   }
 }
+
+Describe 'Find-PendingToolUseId / Test-ToolAnswered' {
+  function New-Transcript([string[]]$Lines) {
+    $path = Join-Path $TestDrive "t-$([guid]::NewGuid()).jsonl"
+    Set-Content -Path $path -Value $Lines
+    return $path
+  }
+  $use = { param($id, $cmd) '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"' + $id + '","name":"Bash","input":{"command":"' + $cmd + '"}}]}}' }
+  $result = { param($id) '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"' + $id + '","content":"ok"}]}}' }
+  $pushInput = [PSCustomObject]@{ command = 'git push' }
+
+  It 'finds the unanswered call matching tool and command' {
+    $t = New-Transcript @((& $use 'toolu_1' 'ls'), (& $use 'toolu_2' 'git push'))
+    Find-PendingToolUseId -TranscriptPath $t -ToolName 'Bash' -ToolInput $pushInput | Should Be 'toolu_2'
+  }
+
+  It 'skips an earlier identical call that already has a result' {
+    $t = New-Transcript @((& $use 'toolu_1' 'git push'), (& $result 'toolu_1'), (& $use 'toolu_2' 'git push'))
+    Find-PendingToolUseId -TranscriptPath $t -ToolName 'Bash' -ToolInput $pushInput | Should Be 'toolu_2'
+  }
+
+  It 'returns $null when every matching call is answered, or none matches' {
+    $t = New-Transcript @((& $use 'toolu_1' 'git push'), (& $result 'toolu_1'), (& $use 'toolu_3' 'ls'))
+    Find-PendingToolUseId -TranscriptPath $t -ToolName 'Bash' -ToolInput $pushInput | Should Be $null
+  }
+
+  It 'returns $null for a missing transcript' {
+    Find-PendingToolUseId -TranscriptPath (Join-Path $TestDrive 'nope.jsonl') -ToolName 'Bash' -ToolInput $pushInput | Should Be $null
+  }
+
+  It 'reports a call as answered only once its result is written' {
+    $t = New-Transcript @((& $use 'toolu_2' 'git push'))
+    Test-ToolAnswered -TranscriptPath $t -ToolUseId 'toolu_2' | Should Be $false
+    Add-Content -Path $t -Value (& $result 'toolu_2')
+    Test-ToolAnswered -TranscriptPath $t -ToolUseId 'toolu_2' | Should Be $true
+  }
+}

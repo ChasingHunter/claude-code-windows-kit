@@ -22,14 +22,21 @@ several prompts (or a laptop that's asleep) never race each other.
 
 ## What it does
 
-- **Idle-only**: the hook checks how long the laptop has been idle
-  (`GetLastInputInfo`). If you're actively at the keyboard, nothing is sent —
-  the normal local permission dialog shows as usual.
+- **Idle-only**: a prompt is relayed once the laptop has had no mouse or
+  keyboard input for `idleMinutes` (`GetLastInputInfo`). While you're at the
+  keyboard, only the normal local dialog shows.
+- **Follows you when you walk away**: a permission prompt that appears while
+  you're at the laptop is held; if you leave it unanswered and go idle, it's
+  relayed then. Answering it on the laptop first means it's never sent — the
+  hook watches the session transcript for the answer, because Claude Code
+  keeps the hook running after a local answer.
 - **Permission prompts**: any tool that needs a yes/no (Bash, Edit, Write,
-  ...) shows up on WhatsApp with **Approve**/**Deny** buttons.
+  ...) shows up on WhatsApp with **Approve**/**Deny** buttons. This includes
+  prompts forced by `ask` rules in auto mode.
 - **Clarifying questions**: when Claude uses `AskUserQuestion`, each question
   is sent as a WhatsApp list message; answers come back the same way a local
-  answer would.
+  answer would. Questions are relayed only if you're already idle when they
+  appear, since the hook runs before the question is shown locally.
 - **Comes back to you**: if you return to the laptop while a prompt is
   waiting (any local key/mouse input), the phone flow is cancelled and the
   normal local dialog takes over instead.
@@ -203,9 +210,15 @@ plain WhatsApp message.
 
 ## Troubleshooting
 
+`%LOCALAPPDATA%\claude-code-windows-kit\phone-approve\activity.log` has one
+line each time the hook runs and one for what it decided (sent, waiting, not
+relayed and why). It records tool names and project folder names, never
+commands or file paths. No lines at all for a prompt means the hook wasn't
+loaded in that session: sessions started before the plugin was installed or
+updated need a restart.
+
 When a prompt can't be relayed, the hook falls back to the normal local
-dialog and writes the reason to
-`%LOCALAPPDATA%\claude-code-windows-kit\phone-approve\error.log`.
+dialog and writes the reason to `error.log` in the same folder.
 
 | Symptom | Cause |
 | --- | --- |
