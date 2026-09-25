@@ -3,3 +3,4 @@
 *.log
 node_modules/
 .wrangler/
+.claude/settings.local.json
