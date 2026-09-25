@@ -27,8 +27,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # phone-approve is awaiting owner review — keep it out of auto-release until it's removed from this list.
-          skip_plugins="phone-approve"
+          skip_plugins=""
 
           for manifest in */.claude-plugin/plugin.json; do
             plugin_dir="$(dirname "$(dirname "$manifest")")"
