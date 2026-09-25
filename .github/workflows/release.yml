@@ -1,0 +1,62 @@
+name: Release plugins
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '*/.claude-plugin/plugin.json'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Tag and release plugins whose version changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # phone-approve is awaiting owner review — keep it out of auto-release until it's removed from this list.
+          skip_plugins="phone-approve"
+
+          for manifest in */.claude-plugin/plugin.json; do
+            plugin_dir="$(dirname "$(dirname "$manifest")")"
+            name="$(jq -r '.name' "$manifest")"
+            version="$(jq -r '.version' "$manifest")"
+
+            case " $skip_plugins " in
+              *" $name "*) echo "skip: $name is in the release skip list"; continue ;;
+            esac
+
+            tag="${name}-v${version}"
+            if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              echo "skip: $tag already exists"
+              continue
+            fi
+
+            prev_tag="$(git tag -l "${name}-v*" --sort=-v:refname | head -n1)"
+            if [ -n "$prev_tag" ]; then
+              notes="$(git log --pretty='- %s (%h)' "${prev_tag}..HEAD" -- "$plugin_dir")"
+            else
+              notes="$(git log -20 --pretty='- %s (%h)' -- "$plugin_dir")"
+            fi
+            if [ -z "$notes" ]; then
+              notes="No changes recorded for $plugin_dir."
+            fi
+
+            echo "releasing $tag"
+            git tag -a "$tag" -m "$name v$version"
+            git push origin "$tag"
+            gh release create "$tag" --title "$name v$version" --notes "$notes"
+          done
