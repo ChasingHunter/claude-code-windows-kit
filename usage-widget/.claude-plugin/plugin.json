@@ -1,0 +1,30 @@
+{
+  "name": "usage-widget",
+  "version": "1.0.0",
+  "description": "Always-on-top Windows widget showing your Claude session and weekly usage limits, color-coded by how much is used.",
+  "author": {
+    "name": "Hunter"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": [
+              "-NoProfile",
+              "-NonInteractive",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/launch.ps1"
+            ],
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
