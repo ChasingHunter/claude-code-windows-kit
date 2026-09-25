@@ -13,11 +13,26 @@ $dataDir = Join-Path $env:LOCALAPPDATA 'claude-code-windows-kit\toast-notify'
 $logoPath = Join-Path $dataDir 'logo.png'
 $errorLogPath = Join-Path $dataDir 'error.log'
 $appId = 'ClaudeCode.WindowsKit'
+$appKey = "HKCU:\Software\Classes\AppUserModelId\$appId"
 
 function Write-ErrorLog {
   param([string]$Text)
-  New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-  Add-Content -Path $errorLogPath -Value "$(Get-Date -Format o) $Text"
+  try {
+    New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+    Add-Content -Path $errorLogPath -Value "$(Get-Date -Format o) $Text"
+  } catch { }
+}
+
+# Retries a registry write 3x, 150ms apart, to ride out "marked for deletion" /
+# IOException races when several notify.ps1 runs touch the same key at once.
+function Invoke-RegistryRetry {
+  param([scriptblock]$Action)
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    try { & $Action; return } catch {
+      if ($attempt -eq 3) { throw }
+      Start-Sleep -Milliseconds 150
+    }
+  }
 }
 
 function Find-ClaudeLogo {
@@ -48,42 +63,80 @@ function Find-EditorIcon {
   return $null
 }
 
+# Draws one candidate logo (either icon, or both together) and saves it via a
+# unique temp file + Move-Item so a concurrently-running notify.ps1 never sees
+# a half-written logo.png. Never throws: a corrupt .ico/.png is logged and
+# reported as failure so Build-Logo can fall back, not abort the toast.
+function Draw-Logo {
+  param([string]$EditorPath, [string]$ClaudePath)
+  $bmp = $null
+  $g = $null
+  $editor = $null
+  $claude = $null
+  try {
+    $bmp = New-Object System.Drawing.Bitmap 256, 256
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.SmoothingMode = 'AntiAlias'
+    $g.InterpolationMode = 'HighQualityBicubic'
+    $g.PixelOffsetMode = 'HighQuality'
+    $g.Clear([System.Drawing.Color]::Transparent)
+
+    $editor = if ($EditorPath) { (New-Object System.Drawing.Icon($EditorPath, 256, 256)).ToBitmap() }
+    $claude = if ($ClaudePath) { [System.Drawing.Image]::FromFile($ClaudePath) }
+    # Both icons stay inside the inscribed circle, since Windows crops the toast logo round.
+    if ($editor -and $claude) {
+      $g.DrawImage($editor, 46, 46, 104, 104)
+      $g.DrawImage($claude, 106, 106, 104, 104)
+    } else {
+      $g.DrawImage(@($editor, $claude)[[int](-not $editor)], 53, 53, 150, 150)
+    }
+    New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+    $tempLogoPath = Join-Path $dataDir "logo.$([Guid]::NewGuid()).tmp.png"
+    $bmp.Save($tempLogoPath, [System.Drawing.Imaging.ImageFormat]::Png)
+    try {
+      Move-Item -LiteralPath $tempLogoPath -Destination $logoPath -Force
+    } catch {
+      # Another run's Move-Item won the race and logo.png already exists; ours
+      # is redundant, not an error.
+      Remove-Item -LiteralPath $tempLogoPath -Force -ErrorAction SilentlyContinue
+    }
+    return $true
+  } catch {
+    Write-ErrorLog "build-logo: $($_.Exception.Message)"
+    return $false
+  } finally {
+    if ($g) { $g.Dispose() }
+    if ($bmp) { $bmp.Dispose() }
+    if ($editor) { $editor.Dispose() }
+    if ($claude) { $claude.Dispose() }
+  }
+}
+
 function Build-Logo {
-  Add-Type -AssemblyName System.Drawing
-  $claudePath = Find-ClaudeLogo
-  $editorPath = Find-EditorIcon
+  try {
+    Add-Type -AssemblyName System.Drawing
+    $claudePath = Find-ClaudeLogo
+    $editorPath = Find-EditorIcon
+  } catch {
+    Write-ErrorLog "build-logo: $($_.Exception.Message)"
+    return $false
+  }
   if (-not $claudePath -and -not $editorPath) { return $false }
 
-  $bmp = New-Object System.Drawing.Bitmap 256, 256
-  $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.SmoothingMode = 'AntiAlias'
-  $g.InterpolationMode = 'HighQualityBicubic'
-  $g.PixelOffsetMode = 'HighQuality'
-  $g.Clear([System.Drawing.Color]::Transparent)
-
-  $editor = if ($editorPath) { (New-Object System.Drawing.Icon($editorPath, 256, 256)).ToBitmap() }
-  $claude = if ($claudePath) { [System.Drawing.Image]::FromFile($claudePath) }
-  # Both icons stay inside the inscribed circle, since Windows crops the toast logo round.
-  if ($editor -and $claude) {
-    $g.DrawImage($editor, 46, 46, 104, 104)
-    $g.DrawImage($claude, 106, 106, 104, 104)
-  } else {
-    $g.DrawImage(@($editor, $claude)[[int](-not $editor)], 53, 53, 150, 150)
-  }
-  $g.Dispose()
-  New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-  $bmp.Save($logoPath, [System.Drawing.Imaging.ImageFormat]::Png)
-  $bmp.Dispose()
-  if ($editor) { $editor.Dispose() }
-  if ($claude) { $claude.Dispose() }
-  return $true
+  # Try both icons together first, then fall back to whichever single icon we
+  # can still draw alone -- a corrupt .ico or .png must never abort the toast.
+  if ($editorPath -and $claudePath -and (Draw-Logo $editorPath $claudePath)) { return $true }
+  if ($editorPath -and (Draw-Logo $editorPath $null)) { return $true }
+  if ($claudePath -and (Draw-Logo $null $claudePath)) { return $true }
+  return $false
 }
 
 function Register-App {
-  $key = "HKCU:\Software\Classes\AppUserModelId\$appId"
-  if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
-  Set-ItemProperty -Path $key -Name DisplayName -Value 'Claude Code'
-  if (Test-Path $logoPath) { Set-ItemProperty -Path $key -Name IconUri -Value $logoPath }
+  Invoke-RegistryRetry {
+    if (-not (Test-Path $appKey)) { New-Item -Path $appKey -Force | Out-Null }
+    Set-ItemProperty -Path $appKey -Name DisplayName -Value 'Claude Code'
+    if (Test-Path $logoPath) { Set-ItemProperty -Path $appKey -Name IconUri -Value $logoPath }
+  }
 }
 
 # Maps the extension folder Claude Code's native binary is running from to the
@@ -139,7 +192,15 @@ function Register-ProtocolHandler {
   $sourceContent = Get-Content -LiteralPath $openSessionSource -Raw
   $upToDate = (Test-Path $stableCopy) -and ((Get-Content -LiteralPath $stableCopy -Raw) -eq $sourceContent)
   if (-not $upToDate) {
-    Copy-Item -LiteralPath $openSessionSource -Destination $stableCopy -Force
+    # Temp file + Move-Item so a concurrently-invoked cckit-open: handler never
+    # reads a half-written stable copy.
+    $tempCopy = Join-Path $dataDir "open-session.$([Guid]::NewGuid()).tmp.ps1"
+    Copy-Item -LiteralPath $openSessionSource -Destination $tempCopy -Force
+    try {
+      Move-Item -LiteralPath $tempCopy -Destination $stableCopy -Force
+    } catch {
+      Remove-Item -LiteralPath $tempCopy -Force -ErrorAction SilentlyContinue
+    }
   }
 
   # The plugin cache path changes on every update, so the registry always
@@ -154,11 +215,13 @@ function Register-ProtocolHandler {
   }
   if ($currentCommand -eq $expectedCommand) { return }
 
-  if (-not (Test-Path $protocolKey)) { New-Item -Path $protocolKey -Force | Out-Null }
-  Set-ItemProperty -Path $protocolKey -Name '(default)' -Value 'URL:Claude Code Windows Kit'
-  Set-ItemProperty -Path $protocolKey -Name 'URL Protocol' -Value ''
-  if (-not (Test-Path $commandKey)) { New-Item -Path $commandKey -Force | Out-Null }
-  Set-ItemProperty -Path $commandKey -Name '(default)' -Value $expectedCommand
+  Invoke-RegistryRetry {
+    if (-not (Test-Path $protocolKey)) { New-Item -Path $protocolKey -Force | Out-Null }
+    Set-ItemProperty -Path $protocolKey -Name '(default)' -Value 'URL:Claude Code Windows Kit'
+    Set-ItemProperty -Path $protocolKey -Name 'URL Protocol' -Value ''
+    if (-not (Test-Path $commandKey)) { New-Item -Path $commandKey -Force | Out-Null }
+    Set-ItemProperty -Path $commandKey -Name '(default)' -Value $expectedCommand
+  }
 }
 
 # Only attach a click action when we're inside a supported editor extension and
@@ -176,7 +239,12 @@ if ($editorScheme -and $sessionId -and $cwd -and ($sessionId -match '\A[0-9a-fA-
 
 try {
   if (-not (Test-Path $logoPath)) { [void](Build-Logo) }
-  if (-not (Test-Path "HKCU:\Software\Classes\AppUserModelId\$appId")) { Register-App }
+  $needsRegisterApp = -not (Test-Path $appKey)
+  if (-not $needsRegisterApp -and (Test-Path $logoPath)) {
+    $currentIconUri = (Get-ItemProperty -Path $appKey -Name IconUri -ErrorAction SilentlyContinue).IconUri
+    if ($currentIconUri -ne $logoPath) { $needsRegisterApp = $true }
+  }
+  if ($needsRegisterApp) { Register-App }
 
   if ($launchUrl) {
     try { Register-ProtocolHandler } catch { Write-ErrorLog "protocol-handler: $($_.Exception.Message)" }

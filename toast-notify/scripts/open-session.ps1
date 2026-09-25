@@ -143,8 +143,13 @@ try {
     # code.cmd runs through cmd.exe, and Start-Process's -ArgumentList joins
     # elements with spaces without quoting them, so an unquoted path with a
     # space or an "&" would split into multiple/garbled arguments. Windows
-    # paths can never contain '"', so quoting like this is always safe.
-    Start-Process -FilePath $cliPath -ArgumentList ('"' + $cwd + '"') -WindowStyle Hidden
+    # paths can never contain '"', so quoting like this is always safe -- except
+    # a path ending in '\' (e.g. a drive root "C:\"), where argv parsing reads
+    # \" as an escaped quote and swallows the close quote; double any trailing
+    # backslashes first so "C:\\" parses back as C:\.
+    $argCwd = $cwd
+    if ($argCwd -match '\\+$') { $argCwd += $matches[0] }
+    Start-Process -FilePath $cliPath -ArgumentList ('"' + $argCwd + '"') -WindowStyle Hidden
   } else {
     $fileUrl = "$($info.Scheme)://file/$($cwd -replace '\\', '/')"
     Start-Process -FilePath $fileUrl
