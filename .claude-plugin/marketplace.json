@@ -1,0 +1,22 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-code-windows-kit",
+  "description": "Small Windows quality-of-life plugins for Claude Code: native toast notifications and an always-on-top usage-limit widget.",
+  "owner": {
+    "name": "Hunter"
+  },
+  "plugins": [
+    {
+      "name": "toast-notify",
+      "description": "Native Windows toast notification whenever Claude Code needs your permission or is waiting for input.",
+      "source": "./toast-notify",
+      "category": "productivity"
+    },
+    {
+      "name": "usage-widget",
+      "description": "Always-on-top Windows widget showing your Claude session and weekly usage limits, color-coded by how much is used.",
+      "source": "./usage-widget",
+      "category": "productivity"
+    }
+  ]
+}
