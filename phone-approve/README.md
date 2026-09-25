@@ -111,6 +111,15 @@ npx wrangler secret put LAPTOP_SECRET        # make up a long random string; the
 4. Click **Verify and save** — the Worker's `GET /webhook` handler answers
    Meta's verification challenge.
 5. Under **Webhook fields**, subscribe to **messages**.
+6. Link your WhatsApp Business Account to the app, otherwise Meta only
+   delivers the dashboard's **Test** events and never your real replies.
+   This works for the free test number too. In
+   [Graph API Explorer](https://developers.facebook.com/tools/explorer/),
+   select **your app** under **Meta App**, generate a token, set the method
+   to **POST** and submit the path
+   `<WhatsApp Business Account ID>/subscribed_apps` (the ID is on
+   **WhatsApp → API Setup**, next to the Phone number ID). It should return
+   `"success": true`; a **GET** on the same path should now list your app.
 
 ### 5. Laptop: run setup
 
@@ -191,6 +200,21 @@ For a question with multiple choices, WhatsApp shows a list message; for
 and you can reply with comma-separated numbers (e.g. `1,3`). There's always
 a trailing "Other (type reply)" option — tap it, then type your answer as a
 plain WhatsApp message.
+
+## Troubleshooting
+
+When a prompt can't be relayed, the hook falls back to the normal local
+dialog and writes the reason to
+`%LOCALAPPDATA%\claude-code-windows-kit\phone-approve\error.log`.
+
+| Symptom | Cause |
+| --- | --- |
+| `error.log` shows code `190` | `WA_TOKEN` expired — you used the temporary 24-hour token. Create the permanent one (step 2) and `npx wrangler secret put WA_TOKEN` again. |
+| `error.log` shows code `131047` | The 24-hour window closed. Send the bot "hi" (step 6 of Setup). |
+| Messages arrive on the phone but taps and "hi" get no response | The WhatsApp Business Account isn't linked to your app (Setup step 4, item 6). |
+| Phone says "⏹ handled on laptop" right away | Laptop input (mouse or keyboard) was seen after the prompt was sent, so the local dialog took over. Working as intended. |
+
+`npx wrangler tail` in `phone-approve\worker` shows the Worker's live logs.
 
 ## Uninstall
 
