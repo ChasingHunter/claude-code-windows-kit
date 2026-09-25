@@ -31,6 +31,11 @@ With several windows sharing one Windows Terminal process, focus-by-window can l
 
 To do this, the first click-able toast registers a per-user, click-to-open URL type (`cckit-open:`) under `HKCU\Software\Classes`, pointing at a copy of the handler script in `%LOCALAPPDATA%\claude-code-windows-kit\toast-notify\`. It only ever focuses (or, for an editor session, opens) the window and session a toast was built for — it can't be reused for anything else. It checks on every click whether `toast-notify` is still installed and quietly removes itself the next time it's invoked after you uninstall the plugin, so nothing lingers.
 
+## Troubleshooting
+
+- **First click shows a VS Code prompt** asking to allow an external app to open the Claude Code extension's URI. That's VS Code's own security prompt for `cckit-open:`, not something this plugin can suppress — tick **"Do not ask me again for this extension"** once and it won't come back.
+- **After updating the plugin**, the click handler's registry entry only refreshes itself the next time a toast fires. If clicking right after an update doesn't behave like the new version, wait for (or trigger) one more notification, or restart/reload the Claude Code session.
+
 ## Customize
 
 - Rebuild the icon (e.g. after installing VS Code): delete `logo.png` from the folder above.

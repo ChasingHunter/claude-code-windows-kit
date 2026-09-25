@@ -54,6 +54,10 @@ Everything runs locally, with one exception. `toast-notify` and `usage-widget` n
 
 `phone-approve` is the exception: to relay a prompt to your phone, it necessarily sends some of your session's text off the machine. Specifically, the tool name and a short summary of what it's about to do — a shell command, a file path, a URL, or a clarifying question and its answer options — is sent to **your own Cloudflare Worker** (deployed under your own account) and then to **Meta/WhatsApp** to display and deliver the message. Nothing else leaves the machine: no file contents, no other tool output, no telemetry. If you don't install `phone-approve`, this doesn't apply to you at all.
 
+## Releases
+
+Each plugin is tagged and released independently, as `<plugin>-v<version>` (e.g. `toast-notify-v1.2.1`). See [Releases](https://github.com/ChasingHunter/claude-code-windows-kit/releases) for per-plugin changelogs generated from commit history.
+
 ## Trademarks
 
 No third-party logos are included in this repo. `toast-notify` builds its icon on your machine from the VS Code and Claude icons already installed there.
