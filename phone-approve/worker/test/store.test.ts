@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApprovalStore,
   applyCancel,
@@ -126,4 +126,47 @@ describe("ApprovalStore", () => {
     const res = await store.fetch(req("/nope"));
     expect(res.status).toBe(404);
   });
+});
+
+describe("ApprovalStore active question", () => {
+  const q = [{ question: "Pick?", header: "Pick", multiSelect: false, options: [{ label: "A" }, { label: "B" }] }];
+  const createQ = (id: string) =>
+    req("/question/create", { method: "POST", body: JSON.stringify({ id, questions: q }) });
+
+  afterEach(() => vi.useRealTimers());
+
+  it("skips an expired active question and activates the next queued one", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const store = new ApprovalStore(makeState());
+    await store.fetch(createQ("old"));
+    vi.setSystemTime(EXPIRY_MS - 1_000);
+    await store.fetch(createQ("queued"));
+
+    vi.setSystemTime(EXPIRY_MS + 1_000);
+    const res = await store.fetch(req("/question/active"));
+    const body = (await res.json()) as { activeId: string | null; activated?: { id: string } };
+    expect(body.activeId).toBe("queued");
+    expect(body.activated?.id).toBe("queued");
+
+    const again = await store.fetch(req("/question/active"));
+    expect(await again.json()).toEqual({ activeId: "queued" });
+  });
+
+  it("a new question activates immediately when the active one has expired", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const store = new ApprovalStore(makeState());
+    await store.fetch(createQ("stale"));
+
+    vi.setSystemTime(EXPIRY_MS + 1_000);
+    const res = await store.fetch(createQ("fresh"));
+    const body = (await res.json()) as { activate: boolean; activated?: unknown };
+    expect(body.activate).toBe(true);
+    expect(body.activated).toBeUndefined();
+
+    const active = await store.fetch(req("/question/active"));
+    expect(((await active.json()) as { activeId: string }).activeId).toBe("fresh");
+  });
+
 });

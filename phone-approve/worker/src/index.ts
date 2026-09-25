@@ -76,7 +76,13 @@ async function handleCreateQuestion(body: { questions?: QuestionInput[] }, env: 
     method: "POST",
     body: JSON.stringify({ id, questions }),
   });
-  const data = (await res.json()) as { activate: boolean; record: QuestionRecord };
+  const data = (await res.json()) as {
+    activate: boolean;
+    record: QuestionRecord;
+    activated?: { id: string; record: QuestionRecord };
+  };
+
+  await sendActivatedQuestion(env, data.activated);
 
   if (data.activate) {
     const message = buildQuestionListMessage({
@@ -88,6 +94,10 @@ async function handleCreateQuestion(body: { questions?: QuestionInput[] }, env: 
     const result = await sendMessage(env, message);
     if (!result.ok) {
       console.log("whatsapp send failed", id, result.status, result.errorCode);
+      // The laptop never gets this id, so nothing else would ever cancel it.
+      const cancelRes = await store.fetch("https://do/cancel", { method: "POST", body: JSON.stringify({ id }) });
+      const cancelled = (await cancelRes.json()) as { activated?: { id: string; record: QuestionRecord } };
+      await sendActivatedQuestion(env, cancelled.activated);
       return json({ error: "whatsapp_send_failed", code: result.errorCode }, 502);
     }
   }
@@ -273,7 +283,16 @@ async function handleWebhookEvent(request: Request, env: Env, ctx: ExecutionCont
       }
     } else if (event.kind === "text") {
       const activeRes = await store.fetch("https://do/question/active");
-      const active = (await activeRes.json()) as { activeId: string | null };
+      const active = (await activeRes.json()) as {
+        activeId: string | null;
+        activated?: { id: string; record: QuestionRecord };
+      };
+
+      if (active.activated) {
+        // Its question was never shown, so this text can't be an answer to it.
+        ctx.waitUntil(sendActivatedQuestion(env, active.activated));
+        continue;
+      }
 
       if (active.activeId) {
         const recordRes = await store.fetch(`https://do/question/record?id=${encodeURIComponent(active.activeId)}`);

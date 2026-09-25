@@ -98,6 +98,33 @@ export class ApprovalStore {
     this.state = state;
   }
 
+  /** Skips past an active question that is no longer pending (expired, or
+   * left behind when its WhatsApp send failed) so it can't swallow replies
+   * or block the queue. `activated` is a queued question that just became
+   * active and still needs its first message sent. */
+  private async settleActive(now: number): Promise<{
+    activeId: string | null;
+    activated?: { id: string; record: QuestionRecord };
+  }> {
+    let activeId = (await this.state.storage.get<string | null>(ACTIVE_KEY)) ?? null;
+    let queue = (await this.state.storage.get<string[]>(QUEUE_KEY)) ?? [];
+    let record: QuestionRecord | undefined;
+    let changed = false;
+
+    while (activeId) {
+      record = await this.state.storage.get<QuestionRecord>(activeId);
+      if (record && questionEffectiveStatus(record, now, EXPIRY_MS) === "pending") break;
+      ({ activeId, queue } = activateNext(queue));
+      record = undefined;
+      changed = true;
+    }
+
+    if (!changed) return { activeId };
+    await this.state.storage.put(ACTIVE_KEY, activeId);
+    await this.state.storage.put(QUEUE_KEY, queue);
+    return { activeId, activated: activeId && record ? { id: activeId, record } : undefined };
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const now = Date.now();
@@ -127,13 +154,13 @@ export class ApprovalStore {
       const record = newQuestionRecord(questions, now);
       await this.state.storage.put(id, record);
 
-      const activeId = (await this.state.storage.get<string | null>(ACTIVE_KEY)) ?? null;
+      const settled = await this.settleActive(now);
       const queue = (await this.state.storage.get<string[]>(QUEUE_KEY)) ?? [];
-      const result = enqueueOrActivate(queue, activeId, id);
+      const result = enqueueOrActivate(queue, settled.activeId, id);
       await this.state.storage.put(ACTIVE_KEY, result.activeId);
       await this.state.storage.put(QUEUE_KEY, result.queue);
 
-      return json({ activate: result.shouldActivateNow, record });
+      return json({ activate: result.shouldActivateNow, record, activated: settled.activated });
     }
 
     if (request.method === "GET" && url.pathname === "/question/record") {
@@ -143,8 +170,7 @@ export class ApprovalStore {
     }
 
     if (request.method === "GET" && url.pathname === "/question/active") {
-      const activeId = (await this.state.storage.get<string | null>(ACTIVE_KEY)) ?? null;
-      return json({ activeId });
+      return json(await this.settleActive(now));
     }
 
     if (request.method === "POST" && url.pathname === "/question/answer") {
