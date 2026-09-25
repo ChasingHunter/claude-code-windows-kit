@@ -139,7 +139,11 @@ try {
 
   if ($cliPath) {
     # code/cursor/windsurf CLIs reuse (and focus) an existing window for this folder.
-    Start-Process -FilePath $cliPath -ArgumentList @($cwd) -WindowStyle Hidden
+    # code.cmd runs through cmd.exe, and Start-Process's -ArgumentList joins
+    # elements with spaces without quoting them, so an unquoted path with a
+    # space or an "&" would split into multiple/garbled arguments. Windows
+    # paths can never contain '"', so quoting like this is always safe.
+    Start-Process -FilePath $cliPath -ArgumentList ('"' + $cwd + '"') -WindowStyle Hidden
   } else {
     $fileUrl = "$($info.Scheme)://file/$($cwd -replace '\\', '/')"
     Start-Process -FilePath $fileUrl
