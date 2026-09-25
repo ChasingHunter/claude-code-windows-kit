@@ -23,3 +23,7 @@ The widget gets its numbers by running `claude -p /usage`, the same `/usage` com
 ## Resource use
 
 About 25 MB of RAM for the widget. Each refresh briefly starts the Claude CLI (a few seconds), and refreshes are skipped when Claude isn't running.
+
+## For other plugin authors
+
+Each background check runs `claude -p /usage` as a real CLI invocation, which also fires other plugins' `SessionStart` hooks — this is harmless, but if your plugin should skip it, check for the `USAGE_WIDGET_POLL=1` environment variable and exit early.

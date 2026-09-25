@@ -1,6 +1,6 @@
 {
   "name": "usage-widget",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Always-on-top Windows widget showing your Claude session and weekly usage limits, color-coded by how much is used.",
   "author": {
     "name": "Hunter"

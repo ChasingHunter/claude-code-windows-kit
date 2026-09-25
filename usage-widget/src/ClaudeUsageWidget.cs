@@ -26,6 +26,8 @@ class Widget : Form
 
     const int CheckMinutes = 10;
     const int StaleMinutes = 25;
+    const int CheckTimeoutMinutes = 3;
+    const string TimeoutProblem = "usage check timed out";
 
     static readonly string Home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     static readonly string Dir = AppDomain.CurrentDomain.BaseDirectory;
@@ -44,6 +46,7 @@ class Widget : Form
     string problem;
     Process check;
     DateTime lastCheck = DateTime.MinValue;
+    DateTime checkStarted = DateTime.MinValue;
     float s;
     Rectangle minRect, closeRect;
     int hover;
@@ -144,7 +147,16 @@ class Widget : Form
     {
         if (check != null)
         {
-            if (!check.HasExited) { Invalidate(); return; }
+            if (!check.HasExited)
+            {
+                if ((DateTime.Now - checkStarted).TotalMinutes >= CheckTimeoutMinutes)
+                {
+                    KillCheck();
+                    problem = TimeoutProblem;
+                }
+                Invalidate();
+                return;
+            }
             check.Dispose();
             check = null;
             if (LoadResult(TmpFile, false))
@@ -158,9 +170,27 @@ class Widget : Form
         Invalidate();
     }
 
+    // Kills the whole cmd.exe/claude process tree a hung check left behind.
+    // The next poll still waits for the normal CheckMinutes schedule, since
+    // lastCheck (set when StartCheck launched it) is untouched here.
+    void KillCheck()
+    {
+        try
+        {
+            ProcessStartInfo psi = new ProcessStartInfo("taskkill.exe", "/T /F /PID " + check.Id);
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            using (Process killer = Process.Start(psi)) { killer.WaitForExit(5000); }
+        }
+        catch { }
+        try { check.Dispose(); } catch { }
+        check = null;
+    }
+
     void StartCheck()
     {
         lastCheck = DateTime.Now;
+        checkStarted = DateTime.Now;
         string claude = FindClaude();
         if (claude == null) { problem = "Claude CLI not found"; return; }
         try
@@ -199,13 +229,14 @@ class Widget : Form
 
     static UsageRow ParseRow(string text, string label)
     {
-        Match m = Regex.Match(text, label + @"[^\n]*?(\d+)% used[^\n]*?resets ([^\n(]+)");
+        // The "resets ..." clause is optional: a fresh 0%-used row has none.
+        Match m = Regex.Match(text, label + @"[^\n]*?(\d+)% used(?:[^\n]*?resets ([^\n(]+))?");
         if (!m.Success) return null;
         UsageRow r = new UsageRow();
         r.Used = Math.Min(100, int.Parse(m.Groups[1].Value));
-        r.ResetRaw = Regex.Replace(m.Groups[2].Value, @"\s+", " ").Trim();
+        r.ResetRaw = m.Groups[2].Success ? Regex.Replace(m.Groups[2].Value, @"\s+", " ").Trim() : "";
         DateTime dt;
-        if (DateTime.TryParseExact(r.ResetRaw.ToUpperInvariant(), ResetFormats, CultureInfo.InvariantCulture,
+        if (r.ResetRaw.Length > 0 && DateTime.TryParseExact(r.ResetRaw.ToUpperInvariant(), ResetFormats, CultureInfo.InvariantCulture,
                 DateTimeStyles.AllowWhiteSpaces, out dt))
         {
             if (dt < DateTime.Now.AddDays(-1)) dt = dt.AddYears(1);
@@ -260,6 +291,7 @@ class Widget : Form
             else if (age.TotalHours < 1) status = "updated " + (int)age.TotalMinutes + "m ago";
             else status = "updated " + (int)age.TotalHours + "h ago";
             if (age.TotalMinutes > StaleMinutes) statusColor = Stage(80);
+            if (problem == TimeoutProblem) { status += " · check timed out"; statusColor = Stage(80); }
         }
         else if (problem != null) { status = problem; statusColor = Stage(80); }
         else status = check != null ? "fetching usage..." : "waiting for Claude";
