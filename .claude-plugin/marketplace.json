@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "claude-code-windows-kit",
-  "description": "Small Windows quality-of-life plugins for Claude Code: native toast notifications and an always-on-top usage-limit widget.",
+  "description": "Small Windows quality-of-life plugins for Claude Code: native toast notifications, an always-on-top usage-limit widget, and WhatsApp approvals when you're away from the laptop.",
   "owner": {
     "name": "Hunter"
   },
@@ -16,6 +16,12 @@
       "name": "usage-widget",
       "description": "Always-on-top Windows widget showing your Claude session and weekly usage limits, color-coded by how much is used.",
       "source": "./usage-widget",
+      "category": "productivity"
+    },
+    {
+      "name": "phone-approve",
+      "description": "Send permission prompts and clarifying questions to your phone over WhatsApp when you've stepped away from the laptop.",
+      "source": "./phone-approve",
       "category": "productivity"
     }
   ]
