@@ -36,7 +36,11 @@ Nothing else to install: the plugins use PowerShell and the .NET Framework that 
 /plugin uninstall usage-widget@claude-code-windows-kit
 ```
 
-Optional cleanup of generated files: delete `%LOCALAPPDATA%\claude-code-windows-kit` and the registry key `HKCU\Software\Classes\AppUserModelId\ClaudeCode.WindowsKit`.
+Optional cleanup of generated files: delete `%LOCALAPPDATA%\claude-code-windows-kit` and the registry keys `HKCU\Software\Classes\AppUserModelId\ClaudeCode.WindowsKit` and `HKCU\Software\Classes\cckit-open`. One-line version, paste into PowerShell:
+
+```powershell
+Remove-Item "$env:LOCALAPPDATA\claude-code-windows-kit" -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item 'HKCU:\Software\Classes\AppUserModelId\ClaudeCode.WindowsKit' -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item 'HKCU:\Software\Classes\cckit-open' -Recurse -Force -ErrorAction SilentlyContinue
+```
 
 ## Privacy
 
