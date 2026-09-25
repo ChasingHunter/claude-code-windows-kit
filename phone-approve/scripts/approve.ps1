@@ -264,6 +264,16 @@ function Invoke-PhoneApproveApi {
   return Invoke-RestMethod @params
 }
 
+# Worker error bodies carry the Meta error code (e.g. 190 = expired WA_TOKEN).
+function Get-PhoneApproveApiError {
+  param($ErrorRecord)
+  $text = $ErrorRecord.Exception.Message
+  if ($ErrorRecord.ErrorDetails -and $ErrorRecord.ErrorDetails.Message) {
+    $text = "$text $($ErrorRecord.ErrorDetails.Message)"
+  }
+  return $text
+}
+
 function Invoke-CreatePermissionRequest {
   param($Config, [string]$ToolName, [string]$Summary, [string]$CwdName, [string]$SessionId)
   try {
@@ -275,6 +285,7 @@ function Invoke-CreatePermissionRequest {
     }
     return [string]$res.id
   } catch {
+    Write-PhoneApproveErrorLog "create permission request failed: $(Get-PhoneApproveApiError $_)"
     return $null
   }
 }
@@ -290,6 +301,7 @@ function Invoke-CreateQuestionRequest {
     }
     return [string]$res.id
   } catch {
+    Write-PhoneApproveErrorLog "create question request failed: $(Get-PhoneApproveApiError $_)"
     return $null
   }
 }
