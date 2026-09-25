@@ -1,7 +1,15 @@
 # Handler for the cckit-open: URL protocol. Registered per-user (no admin) by
-# notify.ps1 so clicking a toast focuses the right editor window on the right
-# session. Windows invokes this as:
+# notify.ps1 so clicking a toast brings up the right window for the right
+# session. Windows invokes this as one of:
 #   open-session.ps1 "cckit-open:?editor=<name>&session=<uuid>&cwd=<encoded path>"
+#   open-session.ps1 "cckit-open:?host=terminal&pid=<host pid>&cwd=<encoded path>"
+#   open-session.ps1 "cckit-open:?host=<editor name>&cwd=<encoded path>"
+#
+# The first shape (an editor's own extension session) focuses the matching
+# editor window, or launches one if none is found, then fires the session URI.
+# The other two (added for terminal / integrated-terminal sessions, which have
+# no session URI to fall back on) only ever focus an existing window -- if
+# nothing matches, they do nothing.
 #
 # The whole URL arrives as a single argument ($args[0]). ANY application on the
 # machine (including a web page, via the browser's protocol handler) can invoke
@@ -67,6 +75,13 @@ $EditorInfo = @{
   'windsurf'        = @{ Scheme = 'windsurf';         Cli = 'windsurf';     ProcessNames = @('Windsurf');        AppName = 'Windsurf' }
 }
 
+# Processes allowed as a terminal focus target for host=terminal. A hostile
+# page can pass any pid, so open-session.ps1 must independently confirm the
+# pid names one of these before ever touching it -- see the host=terminal
+# branch below.
+$TerminalHostProcessNames = @('WindowsTerminal')
+$ConsoleShellProcessNames = @('powershell', 'pwsh', 'cmd')
+
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -101,6 +116,34 @@ public class CckitWin {
     }
 }
 '@
+
+# Same drive-rooted-only + existence checks the original code applied to cwd,
+# now shared by every branch that needs a validated cwd (see the big comment
+# at the original call site, kept below): a UNC path here would make Windows
+# silently attempt outbound SMB/NTLM auth to whatever host is named, so it is
+# rejected before any filesystem call touches it. Returns $null on anything
+# invalid; otherwise the canonicalized, existing directory path.
+function Get-ValidatedCwd {
+  param([string]$CwdText)
+  if (-not $CwdText) { return $null }
+  # Must be drive-rooted (C:\...) ONLY. [Path]::IsPathRooted alone also accepts
+  # drive-relative "\foo" and UNC "\\server\share", neither of which we want.
+  if ($CwdText -notmatch '^[a-zA-Z]:\\') { return $null }
+  $dir = $null
+  try { $dir = Get-Item -LiteralPath $CwdText -ErrorAction Stop } catch { return $null }
+  if (-not $dir.PSIsContainer) { return $null }
+  return $dir.FullName
+}
+
+# pid must be a positive 32-bit-range integer before it is ever passed to
+# Get-Process -- a hostile page can put anything after pid=.
+function Test-ValidPid {
+  param([string]$PidText)
+  if (-not $PidText) { return $false }
+  if ($PidText -notmatch '^\d{1,10}$') { return $false }
+  $value = [int64]$PidText
+  return ($value -ge 1 -and $value -le 2147483648)
+}
 
 # Candidate window-title root names for $Cwd, most specific first: the leaf
 # name of $Cwd, then each ancestor directory, so a session whose cwd is a
@@ -253,25 +296,62 @@ try {
     $params[$kv[0]] = $value
   }
 
+  $hostType = $params['host']
+
+  if ($hostType) {
+    # --- Problem 2: terminal / integrated-terminal sessions. No session URI
+    # exists for these, so all we ever do is try to focus an existing window;
+    # never fall back to launching anything.
+    if ($hostType -eq 'terminal') {
+      $cwd = Get-ValidatedCwd $params['cwd']
+      if (-not $cwd) { exit 0 }
+      if (-not (Test-ValidPid $params['pid'])) { exit 0 }
+      $targetPid = [int]$params['pid']
+
+      # A hostile page can pass any pid: confirm the process still exists AND
+      # that its name is one we allow focusing (WindowsTerminal, or a console
+      # shell -- npm-installed claude runs under node.exe, so the ancestor
+      # notify.ps1 found and reported here is the shell/terminal, not claude).
+      $proc = $null
+      try { $proc = Get-Process -Id $targetPid -ErrorAction Stop } catch { exit 0 }
+      $isAllowedHost = ($TerminalHostProcessNames -contains $proc.ProcessName) -or
+        ($ConsoleShellProcessNames -contains $proc.ProcessName)
+      if (-not $isAllowedHost) { exit 0 }
+
+      $proc.Refresh()
+      $targetHwnd = $proc.MainWindowHandle
+      # NOTE: with several windows sharing one WindowsTerminal.exe process, this
+      # picks whichever MainWindowHandle .NET reports for that pid -- it cannot
+      # target a specific tab, and may focus the wrong Windows Terminal window.
+      if ($targetHwnd -ne [IntPtr]::Zero) { [void](Set-ForegroundWindowRobust $targetHwnd) }
+      exit 0
+    }
+
+    if ($EditorInfo.ContainsKey($hostType)) {
+      # Editor integrated terminal: same window lookup as the editor+session
+      # path below, but there is no session to open and no `code` fallback --
+      # if no window matches, do nothing.
+      $cwd = Get-ValidatedCwd $params['cwd']
+      if (-not $cwd) { exit 0 }
+      $info = $EditorInfo[$hostType]
+      $roots = Get-CandidateRootNames -Cwd $cwd
+      $targetHwnd = Find-EditorWindow -ProcessNames $info.ProcessNames -AppNameHint $info.AppName -RootNames $roots
+      if ($targetHwnd -ne [IntPtr]::Zero) { [void](Set-ForegroundWindowRobust $targetHwnd) }
+      exit 0
+    }
+
+    # Unrecognized host -> no action.
+    exit 0
+  }
+
+  # --- Problem 1: an editor extension session (cckit-open:?editor=&session=&cwd=).
   $editor = $params['editor']
   $session = $params['session']
-  $cwd = $params['cwd']
 
   if (-not $editor -or -not $EditorInfo.ContainsKey($editor)) { exit 0 }
   if (-not $session -or $session -notmatch '\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z') { exit 0 }
+  $cwd = Get-ValidatedCwd $params['cwd']
   if (-not $cwd) { exit 0 }
-
-  # Must be drive-rooted (C:\...) ONLY. [Path]::IsPathRooted alone also accepts
-  # drive-relative "\foo" and UNC "\\server\share", neither of which we want:
-  # ANY app on the machine (a web page included) can invoke this protocol, and
-  # a UNC path here makes Windows silently attempt outbound SMB/NTLM auth to
-  # whatever host is named -- rejected before any filesystem call touches it.
-  if ($cwd -notmatch '^[a-zA-Z]:\\') { exit 0 }
-
-  $dir = $null
-  try { $dir = Get-Item -LiteralPath $cwd -ErrorAction Stop } catch { exit 0 }
-  if (-not $dir.PSIsContainer) { exit 0 }
-  $cwd = $dir.FullName
 
   $info = $EditorInfo[$editor]
 

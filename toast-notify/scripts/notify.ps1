@@ -148,13 +148,35 @@ $EditorFolderSchemes = [ordered]@{
   '.windsurf'        = 'windsurf'
 }
 
-function Find-EditorContext {
+# CIM Win32_Process.Name includes the extension (unlike Get-Process's
+# ProcessName), used below to recognize an editor process as the terminal
+# host for an integrated-terminal session.
+$EditorHostProcessNames = [ordered]@{
+  'vscode'          = 'Code.exe'
+  'vscode-insiders' = 'Code - Insiders.exe'
+  'cursor'          = 'Cursor.exe'
+  'windsurf'        = 'Windsurf.exe'
+}
+$TerminalHostProcessName = 'WindowsTerminal.exe'
+$ConsoleShellProcessNames = @('powershell.exe', 'pwsh.exe', 'cmd.exe')
+
+# Walks up the process tree from this script (a hook child of claude.exe) to
+# work out what should be focused when the toast is clicked. Returns one of:
+#   @{ Kind = 'editor' ; Scheme = <name> }           an editor extension session
+#   @{ Kind = 'editor-terminal' ; Scheme = <name> }  claude running in an
+#                                                      editor's integrated terminal
+#   @{ Kind = 'terminal' ; Pid = <pid> }             claude in a standalone
+#                                                      console/Windows Terminal
+#   @{ Kind = 'none' }                                nothing recognized -> plain toast
+function Find-ClaudeHostContext {
   # Test-only override so the click-to-open path can be exercised from a shell
   # whose parent chain is not the VS Code extension's claude.exe (e.g. running
   # this script directly from a terminal while developing/testing it).
   if ($env:CCKIT_TEST_EDITOR) {
-    if ($EditorFolderSchemes.Values -contains $env:CCKIT_TEST_EDITOR) { return $env:CCKIT_TEST_EDITOR }
-    return $null
+    if ($EditorFolderSchemes.Values -contains $env:CCKIT_TEST_EDITOR) {
+      return @{ Kind = 'editor'; Scheme = $env:CCKIT_TEST_EDITOR }
+    }
+    return @{ Kind = 'none' }
   }
 
   try {
@@ -166,21 +188,50 @@ function Find-EditorContext {
     $visited = New-Object 'System.Collections.Generic.HashSet[int]'
     while ($procs.ContainsKey($currentId) -and $visited.Add($currentId)) {
       $proc = $procs[$currentId]
+
       if ($proc.Name -eq 'claude.exe') {
         foreach ($folder in $EditorFolderSchemes.Keys) {
           if ($proc.ExecutablePath -like "*\$folder\extensions\anthropic.claude-code-*\resources\native-binary\claude.exe") {
-            return $EditorFolderSchemes[$folder]
+            return @{ Kind = 'editor'; Scheme = $EditorFolderSchemes[$folder] }
           }
         }
-        # A claude.exe ancestor exists but it's not one of the editor extensions
-        # (e.g. the plain terminal CLI) -> no click action.
-        return $null
+        # A claude.exe ancestor exists but it's not one of the editor
+        # extensions (the plain terminal CLI) -> keep walking for the window
+        # actually hosting it, instead of giving up here as before.
       }
+
+      # Integrated terminal: claude is running inside an editor's own terminal,
+      # so its process tree sits under that editor rather than a standalone
+      # console host. (An npm install runs the CLI via node.exe, which never
+      # matches 'claude.exe' or any of these names -- it's simply skipped as
+      # the walk continues past it to whatever really hosts the window.)
+      foreach ($kv in $EditorHostProcessNames.GetEnumerator()) {
+        if ($proc.Name -eq $kv.Value) {
+          return @{ Kind = 'editor-terminal'; Scheme = $kv.Key }
+        }
+      }
+
+      # Standalone terminal hosts: Windows Terminal, or a conhost-hosted
+      # console shell (powershell/pwsh/cmd). MainWindowHandle non-zero
+      # confirms this instance actually owns a visible console window right
+      # now, not a headless/background one.
+      if ($proc.Name -eq $TerminalHostProcessName) {
+        return @{ Kind = 'terminal'; Pid = [int]$currentId }
+      }
+      if ($ConsoleShellProcessNames -contains $proc.Name) {
+        try {
+          $shellProc = Get-Process -Id $currentId -ErrorAction Stop
+          if ($shellProc.MainWindowHandle -ne [IntPtr]::Zero) {
+            return @{ Kind = 'terminal'; Pid = [int]$currentId }
+          }
+        } catch { }
+      }
+
       if (-not $proc.ParentProcessId) { break }
       $currentId = [int]$proc.ParentProcessId
     }
   } catch { }
-  return $null
+  return @{ Kind = 'none' }
 }
 
 function Register-ProtocolHandler {
@@ -224,17 +275,36 @@ function Register-ProtocolHandler {
   }
 }
 
-# Only attach a click action when we're inside a supported editor extension and
-# the hook gave us enough to resolve a window + session. Terminal sessions (no
-# claude.exe editor ancestor) always fall through to a plain toast.
-$editorScheme = Find-EditorContext
+# Only attach a click action when the hook gave us enough to resolve a target
+# window (and, for an editor extension session, a session id). Nothing
+# recognized -> plain toast, no click action.
+$hostContext = Find-ClaudeHostContext
 $launchUrl = $null
 # cwd must be drive-rooted (C:\...); a UNC path here would round-trip through
 # open-session.ps1's Get-Item and trigger outbound SMB/NTLM auth, so we don't
 # even build a URL for one -- the toast just falls back to plain.
-if ($editorScheme -and $sessionId -and $cwd -and ($sessionId -match '\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z') -and ($cwd -match '^[a-zA-Z]:\\')) {
+$cwdIsValid = $cwd -and ($cwd -match '^[a-zA-Z]:\\')
+if ($cwdIsValid) {
   $encodedCwd = [Uri]::EscapeDataString($cwd)
-  $launchUrl = "cckit-open:?editor=$editorScheme&session=$sessionId&cwd=$encodedCwd"
+  switch ($hostContext.Kind) {
+    'editor' {
+      if ($sessionId -and ($sessionId -match '\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z')) {
+        $launchUrl = "cckit-open:?editor=$($hostContext.Scheme)&session=$sessionId&cwd=$encodedCwd"
+      }
+    }
+    'editor-terminal' {
+      # Claude running in an editor's integrated terminal: click-to-focus that
+      # editor window by cwd, same as the editor case, but no session URI.
+      $launchUrl = "cckit-open:?host=$($hostContext.Scheme)&cwd=$encodedCwd"
+    }
+    'terminal' {
+      # Standalone console / Windows Terminal: click-to-focus that process's
+      # window by pid; no session URI (it isn't an editor session).
+      if ($hostContext.Pid) {
+        $launchUrl = "cckit-open:?host=terminal&pid=$($hostContext.Pid)&cwd=$encodedCwd"
+      }
+    }
+  }
 }
 
 try {
