@@ -166,7 +166,10 @@ function Register-ProtocolHandler {
 # claude.exe editor ancestor) always fall through to a plain toast.
 $editorScheme = Find-EditorContext
 $launchUrl = $null
-if ($editorScheme -and $sessionId -and $cwd -and ($sessionId -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')) {
+# cwd must be drive-rooted (C:\...); a UNC path here would round-trip through
+# open-session.ps1's Get-Item and trigger outbound SMB/NTLM auth, so we don't
+# even build a URL for one -- the toast just falls back to plain.
+if ($editorScheme -and $sessionId -and $cwd -and ($sessionId -match '\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z') -and ($cwd -match '^[a-zA-Z]:\\')) {
   $encodedCwd = [Uri]::EscapeDataString($cwd)
   $launchUrl = "cckit-open:?editor=$editorScheme&session=$sessionId&cwd=$encodedCwd"
 }

@@ -120,14 +120,15 @@ try {
   $cwd = $params['cwd']
 
   if (-not $editor -or -not $EditorInfo.ContainsKey($editor)) { exit 0 }
-  if (-not $session -or $session -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') { exit 0 }
+  if (-not $session -or $session -notmatch '\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z') { exit 0 }
   if (-not $cwd) { exit 0 }
 
-  # Must be a drive-rooted (C:\...) or UNC (\\server\share\...) absolute path.
-  # Path]::IsPathRooted alone also accepts drive-relative "\foo", which is not
-  # what we want here.
-  $isAbsolute = ($cwd -match '^[a-zA-Z]:\\') -or ($cwd -match '^\\\\')
-  if (-not $isAbsolute) { exit 0 }
+  # Must be drive-rooted (C:\...) ONLY. [Path]::IsPathRooted alone also accepts
+  # drive-relative "\foo" and UNC "\\server\share", neither of which we want:
+  # ANY app on the machine (a web page included) can invoke this protocol, and
+  # a UNC path here makes Windows silently attempt outbound SMB/NTLM auth to
+  # whatever host is named -- rejected before any filesystem call touches it.
+  if ($cwd -notmatch '^[a-zA-Z]:\\') { exit 0 }
 
   $dir = $null
   try { $dir = Get-Item -LiteralPath $cwd -ErrorAction Stop } catch { exit 0 }
