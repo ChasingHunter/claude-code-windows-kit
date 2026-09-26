@@ -25,6 +25,18 @@ function Write-ErrorLog {
   } catch { }
 }
 
+# One line per toast and per click, so "clicking did nothing" can be traced.
+# Records only the kind of target and the folder name, never messages.
+function Write-Activity {
+  param([string]$Text)
+  try {
+    New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+    $log = Join-Path $dataDir 'activity.log'
+    if ((Test-Path $log) -and (Get-Item $log).Length -gt 256KB) { Move-Item $log "$log.1" -Force }
+    Add-Content -Path $log -Value "$(Get-Date -Format o) [$PID] $Text"
+  } catch { }
+}
+
 # Retries a registry write 3x, 150ms apart, to ride out "marked for deletion" /
 # IOException races when several notify.ps1 runs touch the same key at once.
 function Invoke-RegistryRetry {
@@ -317,6 +329,9 @@ if ($cwdIsValid) {
     }
   }
 }
+
+$cwdLeaf = if ($cwd) { Split-Path -Path ([string]$cwd) -Leaf } else { '?' }
+Write-Activity "toast in ${cwdLeaf}: host=$($hostContext.Kind)$(if ($hostContext.Scheme) { "/$($hostContext.Scheme)" }) click=$(if ($launchUrl) { 'yes' } else { 'none' })"
 
 try {
   if (-not (Test-Path $logoPath)) { [void](Build-Logo) }

@@ -34,6 +34,18 @@ function Write-ErrorLog {
   } catch { }
 }
 
+# One line per toast and per click, so "clicking did nothing" can be traced.
+# Records only the kind of target and the folder name, never messages.
+function Write-Activity {
+  param([string]$Text)
+  try {
+    New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+    $log = Join-Path $dataDir 'activity.log'
+    if ((Test-Path $log) -and (Get-Item $log).Length -gt 256KB) { Move-Item $log "$log.1" -Force }
+    Add-Content -Path $log -Value "$(Get-Date -Format o) [$PID] $Text"
+  } catch { }
+}
+
 # Test-only override: points the installed-plugins check at a temp file instead
 # of the real %USERPROFILE%\.claude\plugins\installed_plugins.json, so the
 # self-clean path can be exercised without touching the real one.
@@ -281,7 +293,7 @@ try {
   }
 
   $url = $args[0]
-  if (-not $url) { exit 0 }
+  if (-not $url) { Write-Activity 'click: no url'; exit 0 }
 
   $queryStart = $url.IndexOf('?')
   if ($queryStart -lt 0) { exit 0 }
@@ -297,6 +309,7 @@ try {
   }
 
   $hostType = $params['host']
+  Write-Activity "click received: $(if ($hostType) { "host=$hostType" } else { "editor=$($params['editor'])" })"
 
   if ($hostType) {
     # --- Problem 2: terminal / integrated-terminal sessions. No session URI
@@ -323,7 +336,8 @@ try {
       # NOTE: with several windows sharing one WindowsTerminal.exe process, this
       # picks whichever MainWindowHandle .NET reports for that pid -- it cannot
       # target a specific tab, and may focus the wrong Windows Terminal window.
-      if ($targetHwnd -ne [IntPtr]::Zero) { [void](Set-ForegroundWindowRobust $targetHwnd) }
+      $ok = if ($targetHwnd -ne [IntPtr]::Zero) { Set-ForegroundWindowRobust $targetHwnd } else { $false }
+      Write-Activity "click terminal: window=$($targetHwnd -ne [IntPtr]::Zero) focused=$ok"
       exit 0
     }
 
@@ -336,7 +350,8 @@ try {
       $info = $EditorInfo[$hostType]
       $roots = Get-CandidateRootNames -Cwd $cwd
       $targetHwnd = Find-EditorWindow -ProcessNames $info.ProcessNames -AppNameHint $info.AppName -RootNames $roots
-      if ($targetHwnd -ne [IntPtr]::Zero) { [void](Set-ForegroundWindowRobust $targetHwnd) }
+      $ok = if ($targetHwnd -ne [IntPtr]::Zero) { Set-ForegroundWindowRobust $targetHwnd } else { $false }
+      Write-Activity "click $hostType terminal in $(Split-Path $cwd -Leaf): window=$($targetHwnd -ne [IntPtr]::Zero) focused=$ok"
       exit 0
     }
 
@@ -368,9 +383,11 @@ try {
   $targetHwnd = Find-EditorWindow -ProcessNames $info.ProcessNames -AppNameHint $info.AppName -RootNames $roots
 
   if ($targetHwnd -ne [IntPtr]::Zero) {
-    [void](Set-ForegroundWindowRobust $targetHwnd)
+    $ok = Set-ForegroundWindowRobust $targetHwnd
+    Write-Activity "click $editor session in $(Split-Path $cwd -Leaf): window found, focused=$ok"
     Start-Sleep -Milliseconds 400
   } else {
+    Write-Activity "click $editor session in $(Split-Path $cwd -Leaf): no window found, opening one"
     $cliPath = Find-Cli $info.Cli
 
     if ($cliPath) {
