@@ -18,6 +18,8 @@ A `Notification` hook runs [`scripts/notify.ps1`](scripts/notify.ps1), which:
 
 Errors are written to `%LOCALAPPDATA%\claude-code-windows-kit\toast-notify\error.log` instead of interrupting Claude.
 
+`activity.log` in the same folder has one line per toast (whether it got a click action, and for which kind of window) and one per click (whether the window was found and focused). It records folder names only, never message text.
+
 ## Click to open
 
 Clicking the toast brings up the window Claude Code is running in, like clicking a Slack or Teams notification:
