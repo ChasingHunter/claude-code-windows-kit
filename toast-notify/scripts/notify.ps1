@@ -1,6 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
-$raw = [Console]::In.ReadToEnd()
+# Claude Code sends UTF-8; Windows PowerShell's stdin defaults to the OEM code
+# page, which would garble non-ASCII text in the toast.
+$raw = (New-Object System.IO.StreamReader([Console]::OpenStandardInput(), (New-Object System.Text.UTF8Encoding $false))).ReadToEnd()
 $hookData = $null
 try { $hookData = $raw | ConvertFrom-Json } catch { }
 $message = $hookData.message

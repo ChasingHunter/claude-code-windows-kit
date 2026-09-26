@@ -224,7 +224,7 @@ function Find-PendingToolUseId {
   $candidates = [System.Collections.Generic.List[string]]::new()
   $answered = @{}
 
-  foreach ($line in (Get-Content -LiteralPath $TranscriptPath -Tail $TailLines)) {
+  foreach ($line in (Get-Content -LiteralPath $TranscriptPath -Tail $TailLines -Encoding UTF8)) {
     if ($line -notmatch '"tool_use') { continue }
     try { $entry = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
     $content = $entry.message.content
@@ -317,11 +317,15 @@ function Invoke-PhoneApproveApi {
     TimeoutSec  = 15
     ErrorAction = 'Stop'
   }
+  # Windows PowerShell 5.1 sends string bodies and decodes charset-less
+  # responses as Latin-1, turning non-ASCII text into '?' or mojibake, so the
+  # bytes are encoded and decoded as UTF-8 explicitly.
   if ($null -ne $Body) {
-    $params.Body = ($Body | ConvertTo-Json -Compress -Depth 10)
-    $params.ContentType = 'application/json'
+    $params.Body = [System.Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Compress -Depth 10))
+    $params.ContentType = 'application/json; charset=utf-8'
   }
-  return Invoke-RestMethod @params
+  $response = Invoke-WebRequest @params -UseBasicParsing
+  return ([System.Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray()) | ConvertFrom-Json)
 }
 
 # Worker error bodies carry the Meta error code (e.g. 190 = expired WA_TOKEN).
@@ -466,7 +470,12 @@ if ($MyInvocation.InvocationName -ne '.') {
     # Read ALL of stdin before doing anything else: a hook blocked on stdin
     # ignores its own timeout, so this must never be deferred behind other
     # work.
-    $raw = [Console]::In.ReadToEnd()
+    # Claude Code sends and reads UTF-8, but Windows PowerShell's console
+    # streams default to the OEM code page, which garbles non-ASCII text both
+    # ways (breaking transcript matching and phone answers).
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    try { [Console]::OutputEncoding = $utf8 } catch { }
+    $raw = (New-Object System.IO.StreamReader([Console]::OpenStandardInput(), $utf8)).ReadToEnd()
     if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
 
     try { $hookData = $raw | ConvertFrom-Json -ErrorAction Stop } catch { exit 0 }

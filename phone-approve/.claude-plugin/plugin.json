@@ -1,6 +1,6 @@
 {
   "name": "phone-approve",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Send permission prompts and clarifying questions to your phone over WhatsApp when you've stepped away from the laptop.",
   "author": {
     "name": "Hunter"
