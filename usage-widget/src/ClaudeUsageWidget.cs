@@ -36,6 +36,7 @@ class Widget : Form
     static readonly string Dir = AppDomain.CurrentDomain.BaseDirectory;
     static readonly string OutFile = Path.Combine(Dir, "last-usage.txt");
     static readonly string TmpFile = Path.Combine(Dir, "last-usage.tmp");
+    static readonly string LogFile = Path.Combine(Dir, "activity.log");
 
     static readonly Color Bg = Color.FromArgb(30, 30, 30);
     static readonly Color Edge = Color.FromArgb(68, 68, 68);
@@ -104,6 +105,21 @@ class Widget : Form
     }
 
     int P(float v) { return (int)Math.Round(v * s); }
+
+    // One line per refresh outcome, capped at 128 KB plus one rotated copy.
+    static void Log(string text)
+    {
+        try
+        {
+            if (File.Exists(LogFile) && new FileInfo(LogFile).Length > 128 * 1024)
+            {
+                File.Delete(LogFile + ".1");
+                File.Move(LogFile, LogFile + ".1");
+            }
+            File.AppendAllText(LogFile, DateTime.Now.ToString("o") + " " + text + Environment.NewLine);
+        }
+        catch { }
+    }
 
     static bool ClaudeRunning()
     {
@@ -192,6 +208,7 @@ class Widget : Form
                 {
                     KillCheck();
                     problem = TimeoutProblem;
+                    Log("refresh timed out after " + CheckTimeoutMinutes + " min");
                 }
                 Invalidate();
                 return;
@@ -203,6 +220,7 @@ class Widget : Form
                 File.Copy(TmpFile, OutFile, true);
                 problem = null;
                 emptyChecks = 0;
+                Log("refresh ok: session " + (session != null ? session.Used + "%" : "-") + ", week " + (weekly != null ? weekly.Used + "%" : "-"));
             }
             else
             {
@@ -210,6 +228,7 @@ class Widget : Form
                 // Right after startup /usage can come back without the limit rows, so
                 // retry soon a few times; a login that never has limits (API key) then
                 // drops back to the normal schedule instead of polling every minute.
+                Log("refresh returned no usage numbers (" + (emptyChecks + 1) + " in a row)");
                 if (++emptyChecks <= MaxQuickRetries)
                     lastCheck = DateTime.Now.AddMinutes(RetryMinutes - CheckMinutes);
             }
@@ -240,7 +259,7 @@ class Widget : Form
         lastCheck = DateTime.Now;
         checkStarted = DateTime.Now;
         string claude = FindClaude();
-        if (claude == null) { problem = "Claude CLI not found"; return; }
+        if (claude == null) { problem = "Claude CLI not found"; Log("Claude CLI not found"); return; }
         try
         {
             string cmd = "/s /c \"\"" + claude + "\" -p /usage --no-session-persistence > \"" + TmpFile + "\" 2>&1\"";

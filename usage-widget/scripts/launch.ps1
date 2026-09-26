@@ -30,6 +30,8 @@ try {
 
   Start-Process $exe
 } catch {
-  Add-Content -Path (Join-Path $dataDir 'error.log') -Value "$(Get-Date -Format o) $($_.Exception.Message)"
+  $log = Join-Path $dataDir 'error.log'
+  if ((Test-Path $log) -and (Get-Item $log).Length -gt 128KB) { Move-Item $log "$log.1" -Force }
+  Add-Content -Path $log -Value "$(Get-Date -Format o) $($_.Exception.Message)"
 }
 exit 0

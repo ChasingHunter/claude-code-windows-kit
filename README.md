@@ -56,8 +56,13 @@ Nothing else to install for `toast-notify` and `usage-widget`: they use PowerShe
 - **The widget says "updated Xh ago"** right after opening: it's showing the
   last saved numbers while it fetches new ones ("· refreshing"); they update
   within a minute or two.
-- Each plugin writes problems to its own `error.log` under
-  `%LOCALAPPDATA%\claude-code-windows-kit\<plugin>\`.
+- Each plugin keeps two small logs under
+  `%LOCALAPPDATA%\claude-code-windows-kit\<plugin>\`: `activity.log` (what
+  it did, one line per event) and `error.log` (what went wrong). Each is
+  capped at 128 KB; when full it's renamed to `.1` (replacing the previous
+  one) and a new file starts, so the logs never take more than about 2 MB
+  in total. They record tool, folder and event names, never your prompts,
+  commands or messages.
 
 ## Uninstall
 

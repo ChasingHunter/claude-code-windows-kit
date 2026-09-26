@@ -21,6 +21,7 @@ function Write-ErrorLog {
   param([string]$Text)
   try {
     New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+    if ((Test-Path $errorLogPath) -and (Get-Item $errorLogPath).Length -gt 128KB) { Move-Item $errorLogPath "$errorLogPath.1" -Force }
     Add-Content -Path $errorLogPath -Value "$(Get-Date -Format o) $Text"
   } catch { }
 }
@@ -32,7 +33,7 @@ function Write-Activity {
   try {
     New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
     $log = Join-Path $dataDir 'activity.log'
-    if ((Test-Path $log) -and (Get-Item $log).Length -gt 256KB) { Move-Item $log "$log.1" -Force }
+    if ((Test-Path $log) -and (Get-Item $log).Length -gt 128KB) { Move-Item $log "$log.1" -Force }
     Add-Content -Path $log -Value "$(Get-Date -Format o) [$PID] $Text"
   } catch { }
 }

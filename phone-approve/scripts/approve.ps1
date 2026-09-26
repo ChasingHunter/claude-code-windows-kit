@@ -447,7 +447,7 @@ function Write-PhoneApproveActivity {
     $dataDir = Join-Path $env:LOCALAPPDATA 'claude-code-windows-kit\phone-approve'
     New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
     $log = Join-Path $dataDir 'activity.log'
-    if ((Test-Path $log) -and (Get-Item $log).Length -gt 256KB) { Move-Item $log "$log.1" -Force }
+    if ((Test-Path $log) -and (Get-Item $log).Length -gt 128KB) { Move-Item $log "$log.1" -Force }
     Add-Content -Path $log -Value "$(Get-Date -Format o) [$PID] $Text"
   } catch { }
 }
@@ -457,7 +457,9 @@ function Write-PhoneApproveErrorLog {
   try {
     $dataDir = Join-Path $env:LOCALAPPDATA 'claude-code-windows-kit\phone-approve'
     New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-    Add-Content -Path (Join-Path $dataDir 'error.log') -Value "$(Get-Date -Format o) $Text"
+    $log = Join-Path $dataDir 'error.log'
+    if ((Test-Path $log) -and (Get-Item $log).Length -gt 128KB) { Move-Item $log "$log.1" -Force }
+    Add-Content -Path $log -Value "$(Get-Date -Format o) $Text"
   } catch { }
 }
 

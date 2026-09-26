@@ -18,6 +18,8 @@ Bars change color by how much is used: green under 50%, yellow 50–74%, orange 
 - On opening it shows the last saved numbers until the first refresh lands;
   the status line says "· refreshing" meanwhile.
 - "updated Xm ago" turns orange if the data is more than 25 minutes old.
+- Each refresh's outcome (ok, no numbers, timed out) is written to
+  `activity.log` next to the compiled widget, capped at 128 KB.
 
 ## How it works
 
