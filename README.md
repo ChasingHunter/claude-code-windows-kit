@@ -12,16 +12,31 @@ Works with Claude Code in the terminal and in the VS Code extension (also Cursor
 
 ## Install
 
-Inside Claude Code, run:
+1. Open Claude Code (terminal or the VS Code panel) and run:
 
-```
-/plugin marketplace add ChasingHunter/claude-code-windows-kit
-/plugin install toast-notify@claude-code-windows-kit
-/plugin install usage-widget@claude-code-windows-kit
-/plugin install phone-approve@claude-code-windows-kit
-```
+   ```
+   /plugin marketplace add ChasingHunter/claude-code-windows-kit
+   /plugin install toast-notify@claude-code-windows-kit
+   /plugin install usage-widget@claude-code-windows-kit
+   ```
 
-Install any combination. Start a new chat afterwards so the hooks load.
+2. **Restart every Claude Code session that's already open** (close the chat
+   and start a new one, or reload the VS Code window). Plugins only load when a
+   session starts, so an already-open session won't use them.
+3. Check it worked:
+   - **usage-widget**: a small "Claude usage" box appears in the bottom-right
+     corner within a few seconds. The numbers fill in within about a minute.
+   - **toast-notify**: ask Claude to run any command that needs your
+     approval. A Windows notification pops up; clicking it jumps back to that
+     chat.
+
+`toast-notify` and `usage-widget` need nothing else: they use PowerShell and
+.NET, which come with Windows.
+
+`phone-approve` (WhatsApp approvals) needs about 15 minutes of one-time setup
+with free Cloudflare and Meta accounts. Install it the same way
+(`/plugin install phone-approve@claude-code-windows-kit`), then follow
+[its setup guide](phone-approve/README.md#setup).
 
 ## Requirements
 
@@ -31,6 +46,18 @@ Install any combination. Start a new chat afterwards so the hooks load.
 - `phone-approve` needs a free Cloudflare account and a Meta developer account, and you deploy your own Cloudflare Worker — see [its README](phone-approve/README.md) for setup
 
 Nothing else to install for `toast-notify` and `usage-widget`: they use PowerShell and the .NET Framework that ship with Windows. `phone-approve`'s Worker is a small TypeScript project you deploy yourself.
+
+## If something doesn't show up
+
+- **Nothing happens at all**: the Claude Code session was started before the
+  plugin was installed or updated. Start a new chat.
+- **The usage widget disappeared**: its **×** closes it until you start a new
+  chat (or run `/clear`); **−** only minimizes it to the taskbar.
+- **The widget says "updated Xh ago"** right after opening: it's showing the
+  last saved numbers while it fetches new ones ("· refreshing"); they update
+  within a minute or two.
+- Each plugin writes problems to its own `error.log` under
+  `%LOCALAPPDATA%\claude-code-windows-kit\<plugin>\`.
 
 ## Uninstall
 

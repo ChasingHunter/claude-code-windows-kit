@@ -56,6 +56,21 @@ you deploy your own Worker under your own Cloudflare and Meta accounts.
 This takes about 15 minutes the first time. You'll need a free Cloudflare
 account and a Meta developer account.
 
+### 0. Before you start
+
+1. Install **Node.js LTS** from [nodejs.org](https://nodejs.org) (needed
+   once, to deploy the Worker). Open a **new** PowerShell window afterwards
+   and check `node --version` prints a version.
+2. Get this repo's files: on
+   [the GitHub page](https://github.com/ChasingHunter/claude-code-windows-kit)
+   click **Code → Download ZIP** and extract it, e.g. to
+   `C:\claude-code-windows-kit` (or `git clone` it). All commands below run
+   from inside that folder:
+
+   ```powershell
+   cd C:\claude-code-windows-kit
+   ```
+
 ### 1. Meta: create a WhatsApp-enabled app
 
 1. Go to [developers.facebook.com](https://developers.facebook.com/) →
@@ -91,7 +106,7 @@ The token shown by default on the API Setup page is temporary (expires in
 ```powershell
 cd phone-approve\worker
 npm install
-npx wrangler login
+npx wrangler login      # opens the browser to sign in to Cloudflare
 npx wrangler deploy
 ```
 
@@ -130,13 +145,16 @@ npx wrangler secret put LAPTOP_SECRET        # make up a long random string; the
 
 ### 5. Laptop: run setup
 
+From the repo folder (Windows blocks running downloaded scripts by default,
+hence `-ExecutionPolicy Bypass`, which applies to this one run only):
+
 ```powershell
-cd phone-approve\scripts
-.\setup.ps1
+powershell -ExecutionPolicy Bypass -File .\phone-approve\scripts\setup.ps1
 ```
 
 It asks for your Worker URL and the `LAPTOP_SECRET` value from step 3, and
 writes `%LOCALAPPDATA%\claude-code-windows-kit\phone-approve\config.json`.
+Press Enter to accept the defaults for the other questions.
 
 ### 6. Open the 24-hour window
 
@@ -149,10 +167,23 @@ through to the normal local dialog rather than blocking you.
 
 ### 7. Test it
 
-Set `idleMinutes` to `0` temporarily (edit config.json, or re-run
-`setup.ps1`), then ask Claude to run a shell command. You should get a
-WhatsApp message with Approve/Deny buttons almost immediately. Set
-`idleMinutes` back to a real value (default 5) once confirmed.
+1. Start a **new** Claude Code chat (already-open chats don't load the
+   plugin).
+2. Set `idleMinutes` to `0` temporarily (re-run `setup.ps1`, or edit
+   `config.json`).
+3. Make sure the chat is in **Manual** permission mode (the mode picker in
+   VS Code, or Shift+Tab in the terminal), so it actually asks before running
+   commands. In auto mode Claude only asks for commands your `ask` rules
+   cover, so there'd be nothing to relay.
+4. Ask Claude to run a shell command, then **take your hands off the mouse
+   and keyboard**: any laptop input hands the prompt back to the laptop. A
+   WhatsApp message with **Approve**/**Deny** buttons arrives within
+   seconds; tap one and Claude continues.
+5. Set `idleMinutes` back to a real value (default 5).
+
+If nothing arrives, check `activity.log` (see
+[Troubleshooting](#troubleshooting)): it says whether the prompt reached the
+plugin and why it was or wasn't sent.
 
 ## Config
 
