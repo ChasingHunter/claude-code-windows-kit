@@ -11,7 +11,12 @@ Bars change color by how much is used: green under 50%, yellow 50–74%, orange 
 
 - Opens when you start or resume a chat, or run `/clear`. Only one copy ever runs.
 - **−** minimizes to the taskbar, **×** closes it until your next new chat. Drag it anywhere.
-- Refreshes every 10 minutes, and only while Claude Code is running.
+- Refreshes every 10 minutes, and only while Claude Code is running (the
+  native `claude.exe` or an npm install running under Node). If a refresh
+  comes back without numbers, which can happen right after startup, it
+  retries after a minute, up to 3 times.
+- On opening it shows the last saved numbers until the first refresh lands;
+  the status line says "· refreshing" meanwhile.
 - "updated Xm ago" turns orange if the data is more than 25 minutes old.
 
 ## How it works

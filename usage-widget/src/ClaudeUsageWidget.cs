@@ -5,6 +5,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Globalization;
 using System.IO;
+using System.Management;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -26,6 +27,7 @@ class Widget : Form
 
     const int CheckMinutes = 10;
     const int RetryMinutes = 1;
+    const int MaxQuickRetries = 3;
     const int StaleMinutes = 25;
     const int CheckTimeoutMinutes = 3;
     const string TimeoutProblem = "usage check timed out";
@@ -48,6 +50,7 @@ class Widget : Form
     Process check;
     DateTime lastCheck = DateTime.MinValue;
     DateTime checkStarted = DateTime.MinValue;
+    int emptyChecks;
     float s;
     Rectangle minRect, closeRect;
     int hover;
@@ -107,7 +110,42 @@ class Widget : Form
         Process[] procs = Process.GetProcessesByName("claude");
         bool any = procs.Length > 0;
         foreach (Process p in procs) p.Dispose();
-        return any;
+        return any || NpmClaudeRunning();
+    }
+
+    static DateTime npmProbed = DateTime.MinValue;
+    static bool npmRunning;
+
+    // An npm-installed Claude Code runs as node.exe, not claude.exe. The WMI
+    // query takes a few hundred ms on the UI thread, so probe at most once a minute.
+    static bool NpmClaudeRunning()
+    {
+        if ((DateTime.Now - npmProbed).TotalSeconds < 60) return npmRunning;
+        npmProbed = DateTime.Now;
+        npmRunning = ProbeNpmClaude();
+        return npmRunning;
+    }
+
+    static bool ProbeNpmClaude()
+    {
+        try
+        {
+            using (ManagementObjectSearcher searcher = new ManagementObjectSearcher(
+                "SELECT CommandLine FROM Win32_Process WHERE Name = 'node.exe'"))
+            using (ManagementObjectCollection results = searcher.Get())
+            {
+                foreach (ManagementObject proc in results)
+                {
+                    using (proc)
+                    {
+                        string cmd = proc["CommandLine"] as string;
+                        if (cmd != null && cmd.IndexOf("claude-code", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+                    }
+                }
+            }
+        }
+        catch { }
+        return false;
     }
 
     static string FindClaude()
@@ -164,12 +202,16 @@ class Widget : Form
             {
                 File.Copy(TmpFile, OutFile, true);
                 problem = null;
+                emptyChecks = 0;
             }
             else
             {
                 if (!updated.HasValue) problem = "usage not available for this login";
-                // Right after startup /usage can come back without the limit rows; retry soon.
-                lastCheck = DateTime.Now.AddMinutes(RetryMinutes - CheckMinutes);
+                // Right after startup /usage can come back without the limit rows, so
+                // retry soon a few times; a login that never has limits (API key) then
+                // drops back to the normal schedule instead of polling every minute.
+                if (++emptyChecks <= MaxQuickRetries)
+                    lastCheck = DateTime.Now.AddMinutes(RetryMinutes - CheckMinutes);
             }
         }
         if ((DateTime.Now - lastCheck).TotalMinutes >= CheckMinutes && ClaudeRunning()) StartCheck();

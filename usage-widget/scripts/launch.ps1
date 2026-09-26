@@ -23,7 +23,7 @@ try {
     ) | Where-Object { Test-Path $_ } | Select-Object -First 1
     if (-not $csc) { throw 'C# compiler from .NET Framework 4 not found' }
 
-    $output = & $csc /nologo /target:winexe /optimize+ "/out:$exe" /r:System.Windows.Forms.dll /r:System.Drawing.dll $source 2>&1
+    $output = & $csc /nologo /target:winexe /optimize+ "/out:$exe" /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Management.dll $source 2>&1
     if ($LASTEXITCODE -ne 0) { throw "compile failed: $output" }
     Set-Content -Path $stampFile -Value $hash
   }
