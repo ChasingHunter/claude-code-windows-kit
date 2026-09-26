@@ -25,6 +25,7 @@ class Widget : Form
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
 
     const int CheckMinutes = 10;
+    const int RetryMinutes = 1;
     const int StaleMinutes = 25;
     const int CheckTimeoutMinutes = 3;
     const string TimeoutProblem = "usage check timed out";
@@ -164,7 +165,12 @@ class Widget : Form
                 File.Copy(TmpFile, OutFile, true);
                 problem = null;
             }
-            else if (!updated.HasValue) problem = "usage not available for this login";
+            else
+            {
+                if (!updated.HasValue) problem = "usage not available for this login";
+                // Right after startup /usage can come back without the limit rows; retry soon.
+                lastCheck = DateTime.Now.AddMinutes(RetryMinutes - CheckMinutes);
+            }
         }
         if ((DateTime.Now - lastCheck).TotalMinutes >= CheckMinutes && ClaudeRunning()) StartCheck();
         Invalidate();
@@ -292,6 +298,7 @@ class Widget : Form
             else status = "updated " + (int)age.TotalHours + "h ago";
             if (age.TotalMinutes > StaleMinutes) statusColor = Stage(80);
             if (problem == TimeoutProblem) { status += " · check timed out"; statusColor = Stage(80); }
+            else if (check != null) status += " · refreshing";
         }
         else if (problem != null) { status = problem; statusColor = Stage(80); }
         else status = check != null ? "fetching usage..." : "waiting for Claude";
